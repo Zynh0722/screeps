@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "grunt-screeps": "^1.5.0"
+  },
+  "devDependencies": {
+    "grunt-rsync": "^3.0.0"
+  }
+}
