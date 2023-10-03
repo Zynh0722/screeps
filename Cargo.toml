@@ -1,5 +1,5 @@
 [package]
-name = "screeps-starter-rust"
+name = "valbot"
 version = "0.0.0"
 authors = []
 edition = "2021"
@@ -17,6 +17,9 @@ screeps-game-api = "0.16"
 #screeps-game-api = { path = "../screeps-game-api" }
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = ["console"] }
+serde = { version = "1.0.188", features = ["derive"] }
+serde_json = "1.0.107"
+serde-wasm-bindgen = "0.6.0"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"

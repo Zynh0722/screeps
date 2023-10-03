@@ -1,6 +1,9 @@
 # Compiled source #
 ###################
 target
+Gruntfile.js
+node_modules
+pkg
 
 # Packages #
 ############
