@@ -1,11 +1,12 @@
-#![feature(hash_extract_if)]
+#![feature(hash_extract_if, inline_const, const_trait_impl, const_for)]
 
 use std::cell::RefCell;
 use std::collections::{hash_map::Entry, HashMap};
 
+use itertools::Itertools;
 use log::*;
 use rand::rngs::SmallRng;
-use rand::{thread_rng, Rng, SeedableRng};
+pub(crate) use rand::{Rng, SeedableRng};
 use screeps::{
     constants::{ErrorCode, Part, ResourceType},
     enums::StructureObject,
@@ -15,11 +16,11 @@ use screeps::{
     prelude::*,
 };
 use screeps::{
-    ConstructionSite, RoomObject, Structure, StructureExtension, StructureSpawn, Visual,
+    ConstructionSite, PolyStyle, RoomObject, Structure, StructureExtension, StructureSpawn,
+    StructureTower,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
-use web_sys::console::warn;
 
 mod logging;
 
@@ -66,6 +67,7 @@ enum CreepTarget {
 enum StoreTarget {
     Extension(ObjectId<StructureExtension>),
     Spawn(ObjectId<StructureSpawn>),
+    Tower(ObjectId<StructureTower>),
 }
 
 impl StoreTarget {
@@ -79,6 +81,10 @@ impl StoreTarget {
                 Some(structure) => Some(ResolvedStoreTarget::Spawn(structure)),
                 None => None,
             },
+            StoreTarget::Tower(id) => match id.resolve() {
+                Some(structure) => Some(ResolvedStoreTarget::Tower(structure)),
+                None => None,
+            },
         }
     }
 }
@@ -89,6 +95,8 @@ enum ResolvedStoreTarget {
     Extension(StructureExtension),
     #[serde(skip)]
     Spawn(StructureSpawn),
+    #[serde(skip)]
+    Tower(StructureTower),
 }
 
 impl HasStore for ResolvedStoreTarget {
@@ -98,6 +106,7 @@ impl HasStore for ResolvedStoreTarget {
         match self {
             Extension(structure) => structure.store(),
             Spawn(structure) => structure.store(),
+            Tower(structure) => structure.store(),
         }
     }
 }
@@ -109,6 +118,7 @@ impl AsRef<RoomObject> for ResolvedStoreTarget {
         match self {
             Extension(structure) => structure.as_ref(),
             Spawn(structure) => structure.as_ref(),
+            Tower(structure) => structure.as_ref(),
         }
     }
 }
@@ -118,6 +128,28 @@ impl Transferable for ResolvedStoreTarget {}
 #[derive(Deserialize, Debug)]
 struct Memory {
     creeps: HashMap<String, serde_json::Value>,
+}
+
+trait DefaultMove {
+    fn default_move_to<T>(&self, target: &T) -> Result<(), ErrorCode>
+    where
+        T: AsRef<RoomObject>;
+}
+
+impl DefaultMove for Creep {
+    fn default_move_to<T>(&self, target: &T) -> Result<(), ErrorCode>
+    where
+        T: AsRef<RoomObject>,
+    {
+        self.move_to_with_options(
+            target,
+            Some(
+                screeps::MoveToOptions::new()
+                    .reuse_path(5)
+                    .visualize_path_style(PolyStyle::default().fill("black").stroke_width(2.0)),
+            ),
+        )
+    }
 }
 
 // to use a reserved name as a function name, use `js_name`:
@@ -139,7 +171,7 @@ pub fn game_loop() {
 
         let raw_mem = screeps::memory::ROOT.clone();
 
-        info!("{raw_mem:#?}");
+        // info!("{raw_mem:#?}");
 
         let memory: Result<Memory, _> =
             serde_wasm_bindgen::from_value(JsValue::from(raw_mem.clone()));
@@ -158,46 +190,40 @@ pub fn game_loop() {
             )
             .unwrap();
 
-            info!(
-                "{:#?}\n\n| removed: {}\n| starting: {}\n\nalive {:#?}",
-                memory.creeps.keys(),
-                removed,
-                starting,
-                alive_creeps
-            );
+            info!("\t| removed: {removed}\n\t| starting: {starting}");
         } else {
             warn!("Bad memory");
         }
     }
 
-    CREEP_TARGETS.with_borrow(|creep_targets| {
-        for (_name, target) in creep_targets.iter() {
-            match target {
-                CreepTarget::Upgrade(id) => {
-                    let structure = id.resolve().unwrap();
-
-                    let pos = structure.pos();
-                    screeps::console::add_visual(
-                        Some(
-                            &serde_wasm_bindgen::to_value(&structure.room().unwrap().name())
-                                .unwrap()
-                                .into(),
-                        ),
-                        &serde_wasm_bindgen::to_value(&Visual::circle(
-                            pos.x().u8().into(),
-                            pos.y().u8().into(),
-                            None,
-                        ))
-                        .unwrap(),
-                    );
-                }
-                CreepTarget::Harvest(_) => (),
-                CreepTarget::Construct(_) => (),
-                CreepTarget::Store(_) => (),
-                CreepTarget::Repair(_) => (),
-            }
-        }
-    });
+    // CREEP_TARGETS.with_borrow(|creep_targets| {
+    //     for (_name, target) in creep_targets.iter() {
+    //         match target {
+    //             CreepTarget::Upgrade(id) => {
+    //                 let structure = id.resolve().unwrap();
+    //
+    //                 let pos = structure.pos();
+    //                 screeps::console::add_visual(
+    //                     Some(
+    //                         &serde_wasm_bindgen::to_value(&structure.room().unwrap().name())
+    //                             .unwrap()
+    //                             .into(),
+    //                     ),
+    //                     &serde_wasm_bindgen::to_value(&Visual::circle(
+    //                         pos.x().u8().into(),
+    //                         pos.y().u8().into(),
+    //                         None,
+    //                     ))
+    //                     .unwrap(),
+    //                 );
+    //             }
+    //             CreepTarget::Harvest(_) => (),
+    //             CreepTarget::Construct(_) => (),
+    //             CreepTarget::Store(_) => (),
+    //             CreepTarget::Repair(_) => (),
+    //         }
+    //     }
+    // });
 
     // mutably borrow the creep_targets refcell, which is holding our creep target locks
     // in the wasm heap
@@ -213,15 +239,117 @@ pub fn game_loop() {
     for spawn in game::spawns().values() {
         debug!("running spawn {}", String::from(spawn.name()));
 
-        if game::creeps().keys().count() < 8 {
-            let body = [Part::Move, Part::Move, Part::Carry, Part::Carry, Part::Work];
-            if spawn.room().unwrap().energy_available() >= body[..].sum_parts() {
+        // TODO: improve this. Builder pattern maybe?
+        const THRESHOLDS: &[(usize, u32, &[Part])] = &[
+            (
+                6,
+                300,
+                &[Part::Move, Part::Move, Part::Carry, Part::Carry, Part::Work],
+            ),
+            (
+                12,
+                550,
+                &[
+                    Part::Move,
+                    Part::Move,
+                    Part::Move,
+                    Part::Carry,
+                    Part::Carry,
+                    Part::Work,
+                    Part::Work,
+                    Part::Work,
+                ],
+            ),
+        ];
+
+        if let Some(room) = spawn.room() {
+            let current_creeps = game::creeps().keys().count();
+            let energy_available = &room.energy_available();
+            let body_types = game::creeps()
+                .values()
+                .map(|c| c.body())
+                .map(|b| b.into_iter().map(|p| p.part()))
+                .map(|b| {
+                    b.map(|p| match p {
+                        Part::Move => "M",
+                        Part::Work => "W",
+                        Part::Carry => "C",
+                        Part::Attack => "A",
+                        Part::RangedAttack => "RA",
+                        Part::Tough => "T",
+                        Part::Heal => "H",
+                        Part::Claim => "C",
+                        _ => "?",
+                    })
+                    .join("")
+                })
+                .fold(HashMap::new(), |mut acc, key| {
+                    match acc.entry(key) {
+                        Entry::Occupied(mut e) => {
+                            let value = e.get();
+                            e.insert(value + 1);
+                        }
+                        Entry::Vacant(e) => {
+                            e.insert(0);
+                        }
+                    };
+                    acc
+                });
+
+            let total_bodies: u32 = body_types.values().sum();
+            let bars: HashMap<String, f64> = body_types
+                .into_iter()
+                .map(|(b, q)| (b, q as f64 / total_bodies as f64))
+                .collect();
+
+            for (name, ratio) in bars {
+                let hashes = (10.0 * ratio).round() as usize;
+                let mut bar = String::new();
+                bar.push_str(&"#".repeat(hashes));
+                bar.push_str(&" ".repeat(10 - hashes));
+                info!("{: <10}:[{}]", name, bar)
+            }
+
+            info!("Current Creeps: {current_creeps} -- Energy Available: {energy_available}");
+
+            // THRESHOLDS.iter().for_each(|(t, c, _)| {
+            //     let enough_creeps = &current_creeps <= t;
+            //     let enough_energy = c <= energy_available;
+            //
+            //     let mut buffer = String::new();
+            //     writeln!(buffer, "Spawn Attempt Summary").unwrap();
+            //     writeln!(
+            //         buffer,
+            //         "creeps\tthresh\tpass\n{current_creeps}\t{t}\t{enough_creeps}"
+            //     )
+            //     .unwrap();
+            //     writeln!(
+            //         buffer,
+            //         "energy\tcost\tpass\n{energy_available}\t{c}\t{enough_energy}"
+            //     )
+            //     .unwrap();
+            //     info!("{}", buffer);
+            // });
+
+            if let Some(body) = THRESHOLDS
+                .iter()
+                .rev()
+                .take_while(|(threshold, _, _)| &current_creeps <= threshold)
+                .last()
+                .filter(|(_, cost, _)| cost <= energy_available)
+                .map(|(_, _, body)| body)
+            {
                 // create a unique name, spawn.
                 let name_base = game::time();
                 let name = format!("{}-{}", name_base, additional);
+                // TODO: handle pathfinding and caching manually
                 // note that this bot has a fatal flaw; spawning a creep
                 // creates Memory.creeps[creep_name] which will build up forever;
                 // these memory entries should be prevented (todo doc link on how) or cleaned up
+                //
+                // NOTE: to library author, this code isn't what adds entries to
+                // Memory.creeps[creep_name], it is actually the use of Creep.moveTo in the
+                // run_creep function
                 match spawn.spawn_creep(&body, &name) {
                     Ok(()) => additional += 1,
                     Err(e) => warn!("couldn't spawn: {:?}", e),
@@ -253,20 +381,14 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                     if creep.store().get_used_capacity(Some(ResourceType::Energy)) > 0 =>
                 {
                     if let Some(controller) = controller_id.resolve() {
-                        creep
-                            .upgrade_controller(&controller)
-                            .unwrap_or_else(|e| match e {
-                                ErrorCode::NotInRange => {
-                                    let _ = creep.move_to_with_options(
-                                        &controller,
-                                        Some(screeps::MoveToOptions::new().reuse_path(10)),
-                                    );
-                                }
-                                _ => {
-                                    warn!("couldn't upgrade: {:?}", e);
-                                    entry.remove();
-                                }
+                        if creep.pos().in_range_to(controller.pos(), 3) {
+                            creep.upgrade_controller(&controller).unwrap_or_else(|e| {
+                                warn!("couldn't upgrade: {:?}", e);
+                                entry.remove();
                             });
+                        } else {
+                            let _ = creep.default_move_to(&controller);
+                        }
                     } else {
                         entry.remove();
                     }
@@ -281,10 +403,7 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                                 entry.remove();
                             });
                         } else {
-                            let _ = creep.move_to_with_options(
-                                &source,
-                                Some(screeps::MoveToOptions::new().reuse_path(5)),
-                            );
+                            let _ = creep.default_move_to(&source);
                         }
                     } else {
                         entry.remove();
@@ -292,16 +411,13 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                 }
                 CreepTarget::Construct(source_id) => {
                     if let Some(source) = source_id.resolve() {
-                        if creep.pos().is_near_to(source.pos()) {
+                        if creep.pos().in_range_to(source.pos(), 3) {
                             creep.build(&source).unwrap_or_else(|e| {
                                 warn!("couldn't build: {:?}", e);
                                 entry.remove();
                             });
                         } else {
-                            let _ = creep.move_to_with_options(
-                                &source,
-                                Some(screeps::MoveToOptions::new().reuse_path(5)),
-                            );
+                            let _ = creep.default_move_to(&source);
                         }
                     } else {
                         entry.remove();
@@ -317,10 +433,7 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                                     entry.remove();
                                 })
                         } else {
-                            let _ = creep.move_to_with_options(
-                                &source,
-                                Some(screeps::MoveToOptions::new().reuse_path(5)),
-                            );
+                            let _ = creep.default_move_to(&source);
                         }
                     } else {
                         entry.remove();
@@ -328,16 +441,13 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                 }
                 CreepTarget::Repair(source) => {
                     if let Some(structure) = source.resolve() {
-                        if creep.pos().is_near_to(structure.pos()) {
+                        if creep.pos().in_range_to(structure.pos(), 3) {
                             creep.repair(&structure).unwrap_or_else(|e| {
                                 warn!("couldn't repair: {:?}", e);
-                                entry.remove();
-                            })
+                            });
+                            entry.remove();
                         } else {
-                            let _ = creep.move_to_with_options(
-                                &structure,
-                                Some(screeps::MoveToOptions::new().reuse_path(5)),
-                            );
+                            let _ = creep.default_move_to(&structure);
                         }
                     }
                 }
@@ -351,18 +461,30 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
             let room = creep.room().expect("couldn't resolve creep room");
             'temp: {
                 if creep.store().get_used_capacity(Some(ResourceType::Energy)) > 0 {
+                    let all_structures = room.find(find::STRUCTURES, None);
+
                     // if controller needs a timer reset, fill it
-                    for structure in room.find(find::STRUCTURES, None).iter() {
+                    for structure in all_structures.iter() {
                         if let StructureObject::StructureController(controller) = structure {
-                            if controller.ticks_to_downgrade() < 7500 {
+                            if controller.ticks_to_downgrade() < 15000 {
                                 entry.insert(CreepTarget::Upgrade(controller.id()));
                                 break 'temp;
                             }
                         }
                     }
 
+                    // fill spawners
+                    for structure in all_structures.iter() {
+                        if let StructureObject::StructureSpawn(spawn) = structure {
+                            if spawn.store().get_free_capacity(Some(ResourceType::Energy)) > 0 {
+                                entry.insert(CreepTarget::Store(StoreTarget::Spawn(spawn.id())));
+                                break 'temp;
+                            }
+                        }
+                    }
+
                     // fill extensions
-                    for structure in room.find(find::STRUCTURES, None).iter() {
+                    for structure in all_structures.iter() {
                         if let StructureObject::StructureExtension(extension) = structure {
                             if extension
                                 .store()
@@ -377,17 +499,16 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                         }
                     }
 
-                    // fill spawners
-                    for structure in room.find(find::STRUCTURES, None).iter() {
-                        if let StructureObject::StructureSpawn(spawn) = structure {
-                            if spawn.store().get_free_capacity(Some(ResourceType::Energy)) > 0 {
-                                entry.insert(CreepTarget::Store(StoreTarget::Spawn(spawn.id())));
+                    for structure in all_structures.iter() {
+                        if let StructureObject::StructureTower(tower) = structure {
+                            if tower.store().get_free_capacity(Some(ResourceType::Energy)) > 0 {
+                                entry.insert(CreepTarget::Store(StoreTarget::Tower(tower.id())));
                                 break 'temp;
                             }
                         }
                     }
 
-                    for structure in room.find(find::STRUCTURES, None).iter() {
+                    for structure in all_structures.iter() {
                         if let StructureObject::StructureRoad(road) = structure {
                             if road.hits() < 4000 {
                                 let structure: &Structure = road.as_ref();
@@ -398,7 +519,7 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                     }
 
                     // build things
-                    for site in room.find(find::CONSTRUCTION_SITES, None) {
+                    for site in room.find(find::CONSTRUCTION_SITES, None).iter() {
                         if let Some(id) = site.try_id() {
                             entry.insert(CreepTarget::Construct(id));
                             break 'temp;
@@ -406,7 +527,7 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                     }
 
                     // default case, upgrade controller
-                    for structure in room.find(find::STRUCTURES, None).iter() {
+                    for structure in all_structures.iter() {
                         if let StructureObject::StructureController(controller) = structure {
                             entry.insert(CreepTarget::Upgrade(controller.id()));
                             break 'temp;
@@ -419,8 +540,7 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                         let max = sources.len();
                         move |rng| {
                             let mut gen = move || rng.gen_range(0..max);
-                            let rolls = [gen(), gen()];
-                            rolls.into_iter().max().unwrap() // Bias the second node
+                            gen()
                         }
                     });
                     info!("random value: {random_in_range}");
