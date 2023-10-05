@@ -4,6 +4,8 @@ use std::cell::RefCell;
 use std::collections::{hash_map::Entry, HashMap};
 
 use log::*;
+use rand::rngs::SmallRng;
+use rand::{thread_rng, Rng, SeedableRng};
 use screeps::{
     constants::{ErrorCode, Part, ResourceType},
     enums::StructureObject,
@@ -12,9 +14,12 @@ use screeps::{
     objects::{Creep, Source, StructureController},
     prelude::*,
 };
-use screeps::{ConstructionSite, RoomObject, Structure, StructureExtension, StructureSpawn};
+use screeps::{
+    ConstructionSite, RoomObject, Structure, StructureExtension, StructureSpawn, Visual,
+};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
+use web_sys::console::warn;
 
 mod logging;
 
@@ -27,24 +32,22 @@ pub fn setup() {
 // this is one way to persist data between ticks within Rust's memory, as opposed to
 // keeping state in memory on game objects - but will be lost on global resets!
 thread_local! {
+    static RNG: RefCell<SmallRng> = RefCell::new(SmallRng::seed_from_u64(200));
+}
+
+thread_local! {
     static CREEP_TARGETS: RefCell<HashMap<String, CreepTarget>> = RefCell::new(HashMap::new());
 }
 
-// trait HasStore {
-//     fn store(&self) -> screeps::objects::Store;
-// }
-//
-// impl HasStore for StructureSpawn {
-//     fn store(&self) -> screeps::objects::Store {
-//         self.store()
-//     }
-// }
-//
-// impl HasStore for StructureExtension {
-//     fn store(&self) -> screeps::objects::Store {
-//         self.store()
-//     }
-// }
+trait SumParts {
+    fn sum_parts(&self) -> u32;
+}
+
+impl SumParts for [Part] {
+    fn sum_parts(&self) -> u32 {
+        self.iter().map(|p| p.cost()).sum()
+    }
+}
 
 // this enum will represent a creep's lock on a specific target object, storing a js reference
 // to the object id so that we can grab a fresh reference to the object each successive tick,
@@ -56,6 +59,7 @@ enum CreepTarget {
     Harvest(ObjectId<Source>),
     Construct(ObjectId<ConstructionSite>),
     Store(StoreTarget),
+    Repair(ObjectId<Structure>),
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -129,47 +133,14 @@ pub fn game_loop() {
         });
     }
 
-    if current_tick % 60 == 0 {
-        use js_sys::Reflect;
-        let alive_creeps: Vec<String> = game::creeps().keys().collect();
+    if current_tick % 60 == 0 {}
 
-        let raw_mem = screeps::memory::ROOT.clone();
-
-        info!("{raw_mem:#?}");
-
-        let memory: Result<Memory, _> =
-            serde_wasm_bindgen::from_value(JsValue::from(raw_mem.clone()));
-
-        if let Ok(mut memory) = memory {
-            let starting = memory.creeps.keys().count();
-            let removed = memory
-                .creeps
-                .extract_if(|k, _v| !alive_creeps.contains(k))
-                .count();
-
-            Reflect::set(
-                &screeps::memory::ROOT,
-                &"creeps".into(),
-                &serde_wasm_bindgen::to_value(&memory.creeps).unwrap(),
-            )
-            .unwrap();
-
-            info!(
-                "{:#?}\n\n| removed: {}\n| starting: {}\n\nalive {:#?}",
-                memory.creeps.keys(),
-                removed,
-                starting,
-                alive_creeps
-            );
-        } else {
-            warn!("Bad memory");
-        }
-    }
+    // drawing creeo targets
+    // CREEP_TARGETS.with_borrow(|creep_targets| {});
 
     // mutably borrow the creep_targets refcell, which is holding our creep target locks
     // in the wasm heap
-    CREEP_TARGETS.with(|creep_targets_refcell| {
-        let mut creep_targets = creep_targets_refcell.borrow_mut();
+    CREEP_TARGETS.with_borrow_mut(|mut creep_targets| {
         debug!("running creeps");
         for creep in game::creeps().values() {
             run_creep(&creep, &mut creep_targets);
@@ -181,9 +152,9 @@ pub fn game_loop() {
     for spawn in game::spawns().values() {
         debug!("running spawn {}", String::from(spawn.name()));
 
-        if game::creeps().keys().count() < 3 {
+        if game::creeps().keys().count() < 8 {
             let body = [Part::Move, Part::Move, Part::Carry, Part::Carry, Part::Work];
-            if spawn.room().unwrap().energy_available() >= body.iter().map(|p| p.cost()).sum() {
+            if spawn.room().unwrap().energy_available() >= body[..].sum_parts() {
                 // create a unique name, spawn.
                 let name_base = game::time();
                 let name = format!("{}-{}", name_base, additional);
@@ -294,6 +265,21 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                         entry.remove();
                     }
                 }
+                CreepTarget::Repair(source) => {
+                    if let Some(structure) = source.resolve() {
+                        if creep.pos().is_near_to(structure.pos()) {
+                            creep.repair(&structure).unwrap_or_else(|e| {
+                                warn!("couldn't repair: {:?}", e);
+                                entry.remove();
+                            })
+                        } else {
+                            let _ = creep.move_to_with_options(
+                                &structure,
+                                Some(screeps::MoveToOptions::new().reuse_path(5)),
+                            );
+                        }
+                    }
+                }
                 _ => {
                     entry.remove();
                 }
@@ -311,14 +297,6 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                                 entry.insert(CreepTarget::Upgrade(controller.id()));
                                 break 'temp;
                             }
-                        }
-                    }
-
-                    // build things
-                    for site in room.find(find::CONSTRUCTION_SITES, None) {
-                        if let Some(id) = site.try_id() {
-                            entry.insert(CreepTarget::Construct(id));
-                            break 'temp;
                         }
                     }
 
@@ -348,6 +326,24 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                         }
                     }
 
+                    // build things
+                    for site in room.find(find::CONSTRUCTION_SITES, None) {
+                        if let Some(id) = site.try_id() {
+                            entry.insert(CreepTarget::Construct(id));
+                            break 'temp;
+                        }
+                    }
+
+                    for structure in room.find(find::STRUCTURES, None).iter() {
+                        if let StructureObject::StructureRoad(road) = structure {
+                            if road.hits() < 4000 {
+                                let structure: &Structure = road.as_ref();
+                                entry.insert(CreepTarget::Repair(structure.id()));
+                                break 'temp;
+                            }
+                        }
+                    }
+
                     // default case, upgrade controller
                     for structure in room.find(find::STRUCTURES, None).iter() {
                         if let StructureObject::StructureController(controller) = structure {
@@ -355,8 +351,24 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                             break 'temp;
                         }
                     }
-                } else if let Some(source) = room.find(find::SOURCES_ACTIVE, None).get(0) {
-                    entry.insert(CreepTarget::Harvest(source.id()));
+                } else {
+                    let sources = room.find(find::SOURCES_ACTIVE, None).clone();
+
+                    let random_in_range: usize = RNG.with_borrow_mut({
+                        let max = sources.len();
+                        move |rng| {
+                            let mut gen = move || rng.gen_range(0..max);
+                            let rolls = [gen(), gen()];
+                            rolls.into_iter().max().unwrap() // Bias the second node
+                        }
+                    });
+                    info!("random value: {random_in_range}");
+
+                    let random_source = sources.get(random_in_range);
+
+                    if let Some(source) = random_source {
+                        entry.insert(CreepTarget::Harvest(source.id()));
+                    }
                 }
             }
         }
