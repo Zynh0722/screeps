@@ -202,34 +202,18 @@ pub fn game_loop() {
         }
     }
 
-    // CREEP_TARGETS.with_borrow(|creep_targets| {
-    //     for (_name, target) in creep_targets.iter() {
-    //         match target {
-    //             CreepTarget::Upgrade(id) => {
-    //                 let structure = id.resolve().unwrap();
-    //
-    //                 let pos = structure.pos();
-    //                 screeps::console::add_visual(
-    //                     Some(
-    //                         &serde_wasm_bindgen::to_value(&structure.room().unwrap().name())
-    //                             .unwrap()
-    //                             .into(),
-    //                     ),
-    //                     &serde_wasm_bindgen::to_value(&Visual::circle(
-    //                         pos.x().u8().into(),
-    //                         pos.y().u8().into(),
-    //                         None,
-    //                     ))
-    //                     .unwrap(),
-    //                 );
-    //             }
-    //             CreepTarget::Harvest(_) => (),
-    //             CreepTarget::Construct(_) => (),
-    //             CreepTarget::Store(_) => (),
-    //             CreepTarget::Repair(_) => (),
-    //         }
-    //     }
-    // });
+    for structure in game::structures().values() {
+        if let StructureObject::StructureTower(tower) = structure {
+            if let Some(target) = tower
+                .pos()
+                .find_closest_by_range(screeps::find::HOSTILE_CREEPS)
+            {
+                tower.attack(&target).unwrap_or_else(|e| {
+                    warn!("unable to attack target: {:?}", e);
+                });
+            }
+        }
+    }
 
     // mutably borrow the creep_targets refcell, which is holding our creep target locks
     // in the wasm heap
