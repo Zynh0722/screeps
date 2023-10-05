@@ -133,10 +133,71 @@ pub fn game_loop() {
         });
     }
 
-    if current_tick % 60 == 0 {}
+    if current_tick % 60 == 0 {
+        use js_sys::Reflect;
+        let alive_creeps: Vec<String> = game::creeps().keys().collect();
 
-    // drawing creeo targets
-    // CREEP_TARGETS.with_borrow(|creep_targets| {});
+        let raw_mem = screeps::memory::ROOT.clone();
+
+        info!("{raw_mem:#?}");
+
+        let memory: Result<Memory, _> =
+            serde_wasm_bindgen::from_value(JsValue::from(raw_mem.clone()));
+
+        if let Ok(mut memory) = memory {
+            let starting = memory.creeps.keys().count();
+            let removed = memory
+                .creeps
+                .extract_if(|k, _v| !alive_creeps.contains(k))
+                .count();
+
+            Reflect::set(
+                &screeps::memory::ROOT,
+                &"creeps".into(),
+                &serde_wasm_bindgen::to_value(&memory.creeps).unwrap(),
+            )
+            .unwrap();
+
+            info!(
+                "{:#?}\n\n| removed: {}\n| starting: {}\n\nalive {:#?}",
+                memory.creeps.keys(),
+                removed,
+                starting,
+                alive_creeps
+            );
+        } else {
+            warn!("Bad memory");
+        }
+    }
+
+    CREEP_TARGETS.with_borrow(|creep_targets| {
+        for (_name, target) in creep_targets.iter() {
+            match target {
+                CreepTarget::Upgrade(id) => {
+                    let structure = id.resolve().unwrap();
+
+                    let pos = structure.pos();
+                    screeps::console::add_visual(
+                        Some(
+                            &serde_wasm_bindgen::to_value(&structure.room().unwrap().name())
+                                .unwrap()
+                                .into(),
+                        ),
+                        &serde_wasm_bindgen::to_value(&Visual::circle(
+                            pos.x().u8().into(),
+                            pos.y().u8().into(),
+                            None,
+                        ))
+                        .unwrap(),
+                    );
+                }
+                CreepTarget::Harvest(_) => (),
+                CreepTarget::Construct(_) => (),
+                CreepTarget::Store(_) => (),
+                CreepTarget::Repair(_) => (),
+            }
+        }
+    });
 
     // mutably borrow the creep_targets refcell, which is holding our creep target locks
     // in the wasm heap
@@ -326,14 +387,6 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                         }
                     }
 
-                    // build things
-                    for site in room.find(find::CONSTRUCTION_SITES, None) {
-                        if let Some(id) = site.try_id() {
-                            entry.insert(CreepTarget::Construct(id));
-                            break 'temp;
-                        }
-                    }
-
                     for structure in room.find(find::STRUCTURES, None).iter() {
                         if let StructureObject::StructureRoad(road) = structure {
                             if road.hits() < 4000 {
@@ -341,6 +394,14 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                                 entry.insert(CreepTarget::Repair(structure.id()));
                                 break 'temp;
                             }
+                        }
+                    }
+
+                    // build things
+                    for site in room.find(find::CONSTRUCTION_SITES, None) {
+                        if let Some(id) = site.try_id() {
+                            entry.insert(CreepTarget::Construct(id));
+                            break 'temp;
                         }
                     }
 
