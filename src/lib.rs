@@ -19,9 +19,7 @@ pub fn setup() {
 // keeping state in memory on game objects - but will be lost on global resets!
 thread_local! {
     static RNG: RefCell<SmallRng> = RefCell::new(SmallRng::seed_from_u64(200));
-}
 
-thread_local! {
     static CREEP_TARGETS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
 }
 
