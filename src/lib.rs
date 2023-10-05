@@ -146,7 +146,13 @@ impl DefaultMove for Creep {
             Some(
                 screeps::MoveToOptions::new()
                     .reuse_path(5)
-                    .visualize_path_style(PolyStyle::default().fill("black").stroke_width(2.0)),
+                    .visualize_path_style(
+                        PolyStyle::default()
+                            .fill("black")
+                            .stroke_width(0.15)
+                            .opacity(0.1)
+                            .line_style(screeps::LineDrawStyle::Dashed),
+                    ),
             ),
         )
     }
@@ -247,7 +253,7 @@ pub fn game_loop() {
                 &[Part::Move, Part::Move, Part::Carry, Part::Carry, Part::Work],
             ),
             (
-                12,
+                15,
                 550,
                 &[
                     Part::Move,
