@@ -1,25 +1,11 @@
 #![feature(hash_extract_if)]
 
 use std::cell::RefCell;
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::HashMap;
 
-use log::*;
 use rand::rngs::SmallRng;
-use rand::{thread_rng, Rng, SeedableRng};
-use screeps::{
-    constants::{ErrorCode, Part, ResourceType},
-    enums::StructureObject,
-    find, game,
-    local::ObjectId,
-    objects::{Creep, Source, StructureController},
-    prelude::*,
-};
-use screeps::{
-    ConstructionSite, RoomObject, Structure, StructureExtension, StructureSpawn, Visual,
-};
-use serde::{Deserialize, Serialize};
+use rand::SeedableRng;
 use wasm_bindgen::prelude::*;
-use web_sys::console::warn;
 
 mod logging;
 
@@ -39,16 +25,11 @@ thread_local! {
     static CREEP_TARGETS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
 }
 
+mod timer;
+
 // to use a reserved name as a function name, use `js_name`:
 #[wasm_bindgen(js_name = loop)]
 pub fn game_loop() {
     // info!("loop starting! CPU: {}", game::cpu::get_used());
-    let starting_cpu = game::cpu::get_used();
-    let current_tick = game::time();
-
-    info!(
-        "done!\nloading_cpu: {:.2}\n engine_cpu: {:.2}",
-        starting_cpu,
-        game::cpu::get_used() - starting_cpu
-    )
+    let _timer = timer::TimerLog::start("Main Loop".to_owned());
 }
