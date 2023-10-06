@@ -297,7 +297,7 @@ pub fn game_loop() {
                 let mut bar = String::new();
                 bar.push_str(&"#".repeat(hashes));
                 bar.push_str(&" ".repeat(10 - hashes));
-                info!("{: <10}:[{}]", name, bar)
+                info!("{: >10}:[{}]", name, bar)
             }
 
             info!("Current Creeps: {current_creeps} -- Energy Available: {energy_available}");
@@ -456,7 +456,18 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                     // if controller needs a timer reset, fill it
                     for structure in all_structures.iter() {
                         if let StructureObject::StructureController(controller) = structure {
-                            if controller.ticks_to_downgrade() < 15000 {
+                            let time_to_downgrade = match controller.level() {
+                                1 => 20_000,
+                                2 => 10_000,
+                                3 => 20_000,
+                                4 => 40_000,
+                                5 => 80_000,
+                                6 => 120_000,
+                                7 => 150_000,
+                                8 => 200_000,
+                                _ => 20_000,
+                            };
+                            if controller.ticks_to_downgrade() < time_to_downgrade - 5000 {
                                 entry.insert(CreepTarget::Upgrade(controller.id()));
                                 break 'temp;
                             }
