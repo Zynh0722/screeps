@@ -17,7 +17,7 @@ use screeps::{
 };
 use screeps::{
     ConstructionSite, PolyStyle, RoomObject, Structure, StructureExtension, StructureSpawn,
-    StructureTower,
+    StructureTower, Terrain,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -34,9 +34,7 @@ pub fn setup() {
 // keeping state in memory on game objects - but will be lost on global resets!
 thread_local! {
     static RNG: RefCell<SmallRng> = RefCell::new(SmallRng::seed_from_u64(200));
-}
 
-thread_local! {
     static CREEP_TARGETS: RefCell<HashMap<String, CreepTarget>> = RefCell::new(HashMap::new());
 }
 
@@ -511,10 +509,25 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
 
                     for structure in all_structures.iter() {
                         if let StructureObject::StructureRoad(road) = structure {
-                            if road.hits() < 4000 {
-                                let structure: &Structure = road.as_ref();
-                                entry.insert(CreepTarget::Repair(structure.id()));
-                                break 'temp;
+                            info!("checking for terrain");
+                            if let Ok(Some(terrain)) = road
+                                .pos()
+                                .look_for(screeps::look::TERRAIN)
+                                .map(|l| l.into_iter().take(1).last())
+                            {
+                                let threshold = match terrain {
+                                    Terrain::Plain => 5_000,
+                                    Terrain::Swamp => 25_000,
+                                    Terrain::Wall => 750_000,
+                                };
+                                let threshold = threshold * 8 / 10;
+                                info!("threshold: {threshold}");
+
+                                if road.hits() < threshold {
+                                    let structure: &Structure = road.as_ref();
+                                    entry.insert(CreepTarget::Repair(structure.id()));
+                                    break 'temp;
+                                }
                             }
                         }
                     }
@@ -541,7 +554,7 @@ fn run_creep(creep: &Creep, creep_targets: &mut HashMap<String, CreepTarget>) {
                         let max = sources.len();
                         move |rng| {
                             let mut gen = move || rng.gen_range(0..max);
-                            gen()
+                            [gen(), gen()].into_iter().max().unwrap()
                         }
                     });
                     info!("random value: {random_in_range}");
