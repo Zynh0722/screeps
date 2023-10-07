@@ -235,7 +235,7 @@ pub fn game_loop() {
                 &[Part::Move, Part::Move, Part::Carry, Part::Carry, Part::Work],
             ),
             (
-                17,
+                20,
                 550,
                 &[
                     Part::Move,
