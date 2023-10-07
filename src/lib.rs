@@ -300,25 +300,6 @@ pub fn game_loop() {
 
             info!("Current Creeps: {current_creeps} -- Energy Available: {energy_available}");
 
-            // THRESHOLDS.iter().for_each(|(t, c, _)| {
-            //     let enough_creeps = &current_creeps <= t;
-            //     let enough_energy = c <= energy_available;
-            //
-            //     let mut buffer = String::new();
-            //     writeln!(buffer, "Spawn Attempt Summary").unwrap();
-            //     writeln!(
-            //         buffer,
-            //         "creeps\tthresh\tpass\n{current_creeps}\t{t}\t{enough_creeps}"
-            //     )
-            //     .unwrap();
-            //     writeln!(
-            //         buffer,
-            //         "energy\tcost\tpass\n{energy_available}\t{c}\t{enough_energy}"
-            //     )
-            //     .unwrap();
-            //     info!("{}", buffer);
-            // });
-
             if let Some(body) = THRESHOLDS
                 .iter()
                 .rev()
