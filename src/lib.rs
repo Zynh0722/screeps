@@ -302,9 +302,8 @@ pub fn game_loop() {
 
             if let Some(body) = THRESHOLDS
                 .iter()
-                .rev()
-                .take_while(|(threshold, _, _)| &current_creeps <= threshold)
-                .last()
+                .skip_while(|(threshold, _, _)| &current_creeps > threshold)
+                .next()
                 .filter(|(_, cost, _)| cost <= energy_available)
                 .map(|(_, _, body)| body)
             {
